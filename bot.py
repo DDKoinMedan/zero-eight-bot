@@ -47,15 +47,41 @@ LEVEL_PERCENTAGES = {
     10: 0.5, 11: 0.5, 12: 0.5, 13: 0.5, 14: 0.5, 15: 0.5
 }
 
-# /start Handler & Registration Check
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE telegram_id = %s", (user.id,))
-    db_user = cur.fetchone()
-    cur.close()
-    conn.close()
+# Pendaftaran Member Baru Step-by-Step
+async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    step = context.user_data.get('reg_step')
+
+    # Jika user mengetik sesuatu tapi tidak sedang dalam sesi registrasi
+    if not step:
+        return
+
+    if step == 'full_name':
+        context.user_data['reg_name'] = text
+        context.user_data['reg_step'] = 'broker_acc'
+        await update.message.reply_text("Masukkan **Nomor Akun Broker** Anda (contoh: MT4/MT5 ID / Akun CopyTrade):")
+    elif step == 'broker_acc':
+        context.user_data['reg_broker'] = text
+        
+        user = update.effective_user
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO users (telegram_id, username, full_name, broker_account, upline_broker, status)
+                VALUES (%s, %s, %s, %s, %s, 'pending')
+            """, (user.id, user.username, context.user_data['reg_name'], text, context.user_data.get('reg_upline')))
+            conn.commit()
+            await update.message.reply_text("✅ Pendaftaran berhasil! Akun Anda sedang menunggu verifikasi Admin.")
+            context.user_data.clear()
+        except Exception as e:
+            conn.rollback
+            logger.error(f"Error saat registrasi: {e}")
+            # Tampilkan pesan spesifik agar tahu jika errornya bukan karena duplikat
+            await update.message.reply_text(f"❌ Terjadi kesalahan database: {str(e)}\nSilakan mulai ulang dengan /start.")
+        finally:
+            cur.close()
+            conn.close()
 
     if not db_user:
         args = context.args
