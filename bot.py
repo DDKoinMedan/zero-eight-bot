@@ -101,15 +101,23 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # Ambil data user beserta bahasa pilihannya dari database
+    # Ambil data user dengan konversi aman ke integer/string
+    db_user = None
     try:
-        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (user_id,))
+        # Coba ambil berdasarkan telegram_id sebagai integer
+        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (int(user_id),))
         db_user = cur.fetchone()
     except Exception as e:
-        db_user = None
+        try:
+            # Cadangan jika telegram_id disimpan sebagai string di database
+            cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (str(user_id),))
+            db_user = cur.fetchone()
+        except Exception as err:
+            print(f"Database fetch error: {err}")
 
+    # Tentukan nilai broker_account dengan aman
+    broker_acc = str(db_user[1]) if db_user and len(db_user) > 1 and db_user[1] else str(user_id)
     lang = db_user[5] if db_user and len(db_user) > 5 and db_user[5] else "id"
-    broker_acc = db_user[1] if db_user and db_user[1] else str(user_id)
 
     if data == "main_menu":
         text = (
@@ -136,7 +144,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Level Terbuka: {levels} Level"
             )
         else:
-            text = "👤 **PROFIL SAYA**\n\nData profil tidak ditemukan."
+            text = f"👤 **PROFIL SAYA**\n\nData profil tidak ditemukan untuk ID: {user_id}."
             
         keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -157,7 +165,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_referral":
-        # Kembali menggunakan nomor akun broker sebagai referensi link
+        # Menggunakan nomor akun broker asli dari database
         referral_link = f"https://t.me/loyalty_08_bot?start=REF{broker_acc}"
         text = (
             "🔗 **LINK REFERRAL ANDA**\n\n"
@@ -187,12 +195,15 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("lang_"):
         selected_lang = data.split("_")[1]
         
-        # Simpan pilihan bahasa ke database Supabase
         try:
-            cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, user_id))
+            cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, int(user_id)))
             conn.commit()
         except Exception as e:
-            print(f"Error saving language: {e}")
+            try:
+                cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, str(user_id)))
+                conn.commit()
+            except Exception as err:
+                print(f"Error saving language: {err}")
 
         confirmation_texts = {
             "id": "✅ Bahasa berhasil diubah ke **Indonesia**.",
