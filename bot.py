@@ -32,7 +32,7 @@ cur = conn.cursor()
 # Tahapan Conversation untuk Pendaftaran
 GET_BROKER, GET_NAME = range(2)
 
-# Kamus Terjemahan Multibahasa
+# Kamus Terjemahan Multibahasa (Termasuk Pesan Akses Tanpa Referral)
 LANGS = {
     "id": {
         "welcome": "🌟 **SELAMAT DATANG DI ZERO EIGHT LOYALTY BOT**",
@@ -47,8 +47,17 @@ LANGS = {
         "bantuan_title": "❓ **BANTUAN**", "bantuan_desc": "Silakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi.",
         "lang_prompt": "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda:",
         "back": "🔙 Menu Utama",
-        "need_ref": "⚠️ **AKSES DITOLAK**\n\nAnda harus mendaftar menggunakan **Link Referral** yang valid dari upline Anda untuk mengakses bot ini.",
-        "info_umum": "ℹ️ **INFORMASI UMUM BOT**\n\nIni adalah ZERO EIGHT Loyalty Bot. Untuk mendaftar dan bergabung, silakan dapatkan link referral dari member resmi kami."
+        "unauthorized_msg": (
+            "👋 **Selamat Datang di Zero Eight Bot**\n\n"
+            "🤖 Zero Eight Bot adalah sistem otomatis untuk menghitung, mencatat, dan memantau poin loyalitas anggota Komunitas ZeroEight.\n\n"
+            "⚠️ **PERHATIAN**\n\n"
+            "Untuk menjaga validitas data dan poin komunitas, seluruh fitur bot hanya dapat digunakan oleh anggota yang telah melakukan registrasi melalui link referral resmi ZeroEight.\n\n"
+            "🔒 Jika Anda belum terdaftar, silakan lakukan registrasi terlebih dahulu menggunakan referral yang valid.\n\n"
+            "✅ Setelah akun Anda terverifikasi, Anda dapat:\n"
+            "• Melihat total poin loyalitas\n"
+            "• Mengecek riwayat perolehan poin\n"
+            "• Mendapatkan informasi program dan reward terbaru"
+        )
     },
     "en": {
         "welcome": "🌟 **WELCOME TO ZERO EIGHT LOYALTY BOT**",
@@ -63,8 +72,17 @@ LANGS = {
         "bantuan_title": "❓ **SUPPORT**", "bantuan_desc": "Please contact Admin if you encounter any account or transaction issues.",
         "lang_prompt": "🌐 **SELECT LANGUAGE**\n\nPlease choose your preferred language:",
         "back": "🔙 Main Menu",
-        "need_ref": "⚠️ **ACCESS DENIED**\n\nYou must register using a valid **Referral Link** from your upline to access this bot.",
-        "info_umum": "ℹ️ **GENERAL BOT INFORMATION**\n\nThis is ZERO EIGHT Loyalty Bot. To register and join, please obtain a referral link from our official members."
+        "unauthorized_msg": (
+            "👋 **Welcome to Zero Eight Bot**\n\n"
+            "🤖 Zero Eight Bot is an automated system to calculate, record, and monitor loyalty points for ZeroEight Community members.\n\n"
+            "⚠️ **ATTENTION**\n\n"
+            "To maintain data and community points validity, all bot features can only be used by members who have registered through an official ZeroEight referral link.\n\n"
+            "🔒 If you are not registered, please register first using a valid referral.\n\n"
+            "✅ Once your account is verified, you can:\n"
+            "• View total loyalty points\n"
+            "• Check points acquisition history\n"
+            "• Get the latest program and reward information"
+        )
     }
 }
 
@@ -94,10 +112,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Cek parameter referral dari link start (contoh: /start REF999990001)
     args = context.args
     if not args or not args[0].startswith("REF"):
-        # Jika tidak pakai link referral dan bukan admin, tolak akses dan tampilkan info umum
-        keyboard = [[InlineKeyboardButton("ℹ️ Informasi Bot", callback_data="info_umum")]]
+        # Jika akses langsung tanpa referral dan bukan admin, tampilkan pesan informasi umum + tombol ganti bahasa
+        keyboard = [
+            [InlineKeyboardButton("🌐 Ganti Bahasa / Change Language", callback_data="guest_language")]
+        ]
         await update.message.reply_text(
-            LANGS["id"]["need_ref"], 
+            LANGS["id"]["unauthorized_msg"], 
             reply_markup=InlineKeyboardMarkup(keyboard), 
             parse_mode="Markdown"
         )
@@ -117,7 +137,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
-    # Validasi: Akun broker harus berupa angka sepenuhnya
+    # Validasi ketat: Akun broker harus berupa angka sepenuhnya
     if not text.isdigit():
         await update.message.reply_text("❌ Nomor akun broker harus berupa **angka** saja. Silakan masukkan ulang nomor akun broker Anda:")
         return GET_BROKER
@@ -130,7 +150,6 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
     user_id = update.effective_user.id
     broker_acc = context.user_data.get("broker_account")
-    upline = context.user_data.get("upline", "-")
 
     # Simpan data registrasi baru ke Supabase
     try:
@@ -173,7 +192,28 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # Ambil data user dari database
+    # Handle pilihan bahasa untuk Guest (pengguna tanpa referral)
+    if data.startswith("guest_lang_"):
+        selected_lang = data.split("_")[2]
+        t = LANGS.get(selected_lang, LANGS["id"])
+        keyboard = [
+            [InlineKeyboardButton("🌐 Change Language / Ganti Bahasa", callback_data="guest_language")]
+        ]
+        await query.message.edit_text(t["unauthorized_msg"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+    if data == "guest_language":
+        keyboard = [
+            [InlineKeyboardButton("🇮🇩 Indonesia", callback_data="guest_lang_id"), InlineKeyboardButton("🇬🇧 English", callback_data="guest_lang_en")],
+            [InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="guest_lang_vi"), InlineKeyboardButton("🇹🇭 ไทย", callback_data="guest_lang_th")],
+            [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ", callback_data="guest_lang_km"), InlineKeyboardButton("🇨🇳 中文", callback_data="guest_lang_zh")],
+            [InlineKeyboardButton("🇮🇳 भारत (Hindi)", callback_data="guest_lang_hi"), InlineKeyboardButton("🇸🇦 العربية", callback_data="guest_lang_ar")],
+            [InlineKeyboardButton("🇫🇷 Français", callback_data="guest_lang_fr"), InlineKeyboardButton("🇷🇺 Русский", callback_data="guest_lang_ru")]
+        ]
+        await query.message.edit_text("🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+    # Ambil data user terdaftar dari database
     db_user = None
     try:
         cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s OR telegram_id::text = %s", (user_id, str(user_id)))
@@ -181,7 +221,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error fetching user: {e}")
 
-    # Fallback data jika admin utama atau user khusus
+    # Fallback data jika admin utama
     if not db_user and user_id in ADMIN_IDS:
         db_user = ("Admin Utama", "999990001", "Administrator", 0, 0, "id")
 
@@ -199,10 +239,6 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(t["bantuan"], callback_data="menu_bantuan")]
         ]
         await query.message.edit_text(f"{t['welcome']}\n\n{t['menu_prompt']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "info_umum":
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
-        await query.message.edit_text(LANGS["id"]["info_umum"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_profil":
         text = (
