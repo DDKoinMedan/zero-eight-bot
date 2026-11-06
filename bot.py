@@ -101,109 +101,125 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # Ambil data user dengan konversi aman ke integer/string
+    # 1. Cari data berdasarkan telegram_id untuk mendapatkan nomor akun broker & bahasa
     db_user = None
     try:
-        # Coba ambil berdasarkan telegram_id sebagai integer
-        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (int(user_id),))
+        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s OR telegram_id::text = %s", (user_id, str(user_id)))
         db_user = cur.fetchone()
     except Exception as e:
-        try:
-            # Cadangan jika telegram_id disimpan sebagai string di database
-            cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (str(user_id),))
-            db_user = cur.fetchone()
-        except Exception as err:
-            print(f"Database fetch error: {err}")
+        print(f"Error fetching user: {e}")
 
-    # Tentukan nilai broker_account dengan aman
-    broker_acc = str(db_user[1]) if db_user and len(db_user) > 1 and db_user[1] else str(user_id)
+    broker_acc = str(db_user[1]) if db_user and db_user[1] else "999990001"
     lang = db_user[5] if db_user and len(db_user) > 5 and db_user[5] else "id"
 
+    # Kamus Terjemahan Teks Menu Utama
+    texts = {
+        "id": {
+            "main_title": "🌟 **SELAMAT DATANG DI MENU UTAMA**\n\nSilakan pilih menu di bawah ini:",
+            "profil": "👤 Profil Saya", "poin": "💰 Poin Saya", "jaringan": "🌐 Jaringan Saya", 
+            "reward": "🎁 Daftar Reward", "referral": "🔗 Link Referral Saya", "language": "🌐 Ganti Bahasa", "bantuan": "❓ Bantuan",
+            "profil_title": "👤 **PROFIL SAYA**", "name": "Nama", "broker": "Akun Broker", "status": "Status", "deposit": "Deposit USC", "levels": "Level Terbuka",
+            "poin_title": "💰 **POIN SAYA**", "poin_desc": "Total Poin Anda: **0 Poin**",
+            "jaringan_title": "🌐 **JARINGAN SAYA**", "jaringan_desc": "Fitur jaringan downline sedang dalam pengembangan.",
+            "reward_title": "🎁 **DAFTAR REWARD**", "reward_desc": "Belum ada reward yang tersedia saat ini. Stay tuned!",
+            "referral_title": "🔗 **LINK REFERRAL ANDA**", "referral_desc": "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:",
+            "bantuan_title": "❓ **BANTUAN**", "bantuan_desc": "Silakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi.",
+            "lang_prompt": "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda:",
+            "back": "🔙 Menu Utama"
+        },
+        "en": {
+            "main_title": "🌟 **WELCOME TO MAIN MENU**\n\nPlease select an option below:",
+            "profil": "👤 My Profile", "poin": "💰 My Points", "jaringan": "🌐 My Network", 
+            "reward": "🎁 Rewards List", "referral": "🔗 My Referral Link", "language": "🌐 Change Language", "bantuan": "❓ Support",
+            "profil_title": "👤 **MY PROFILE**", "name": "Name", "broker": "Broker Account", "status": "Status", "deposit": "Deposit USC", "levels": "Unlocked Levels",
+            "poin_title": "💰 **MY POINTS**", "poin_desc": "Your Total Points: **0 Points**",
+            "jaringan_title": "🌐 **MY NETWORK**", "jaringan_desc": "Downline network feature is under development.",
+            "reward_title": "🎁 **REWARDS LIST**", "reward_desc": "No rewards available at the moment. Stay tuned!",
+            "referral_title": "🔗 **MY REFERRAL LINK**", "referral_desc": "Share the link below with your friends or partners to join the network:",
+            "bantuan_title": "❓ **SUPPORT**", "bantuan_desc": "Please contact Admin if you encounter any account or transaction issues.",
+            "lang_prompt": "🌐 **SELECT LANGUAGE**\n\nPlease choose your preferred language:",
+            "back": "🔙 Main Menu"
+        }
+    }
+    # Fallback ke Indonesia jika bahasa lain belum diatur kamusnya
+    t = texts.get(lang, texts["id"])
+
     if data == "main_menu":
-        text = (
-            "🌟 **SELAMAT DATANG DI MENU UTAMA**\n\n"
-            "Silakan pilih menu di bawah ini:"
-        )
         keyboard = [
-            [InlineKeyboardButton("👤 Profil Saya", callback_data="menu_profil"), InlineKeyboardButton("💰 Poin Saya", callback_data="menu_poin")],
-            [InlineKeyboardButton("🌐 Jaringan Saya", callback_data="menu_jaringan"), InlineKeyboardButton("🎁 Daftar Reward", callback_data="menu_reward")],
-            [InlineKeyboardButton("🔗 Link Referral Saya", callback_data="menu_referral"), InlineKeyboardButton("🌐 Ganti Bahasa", callback_data="menu_language")],
-            [InlineKeyboardButton("❓ Bantuan", callback_data="menu_bantuan")]
+            [InlineKeyboardButton(t["profil"], callback_data="menu_profil"), InlineKeyboardButton(t["poin"], callback_data="menu_poin")],
+            [InlineKeyboardButton(t["jaringan"], callback_data="menu_jaringan"), InlineKeyboardButton(t["reward"], callback_data="menu_reward")],
+            [InlineKeyboardButton(t["referral"], callback_data="menu_referral"), InlineKeyboardButton(t["language"], callback_data="menu_language")],
+            [InlineKeyboardButton(t["bantuan"], callback_data="menu_bantuan")]
         ]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.message.edit_text(t["main_title"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_profil":
         if db_user:
             name, broker, status, deposit, levels, _ = db_user
             text = (
-                f"👤 **PROFIL SAYA**\n\n"
-                f"Nama: {name}\n"
-                f"Akun Broker: {broker}\n"
-                f"Status: {status}\n"
-                f"Deposit USC: {deposit}\n"
-                f"Level Terbuka: {levels} Level"
+                f"{t['profil_title']}\n\n"
+                f"{t['name']}: {name}\n"
+                f"{t['broker']}: {broker}\n"
+                f"{t['status']}: {status}\n"
+                f"{t['deposit']}: {deposit}\n"
+                f"{t['levels']}: {levels} Level"
             )
         else:
-            text = f"👤 **PROFIL SAYA**\n\nData profil tidak ditemukan untuk ID: {user_id}."
+            text = f"{t['profil_title']}\n\nData profil tidak ditemukan."
             
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_poin":
-        text = "💰 **POIN SAYA**\n\nTotal Poin Anda: **0 Poin**\n\nTerus tingkatkan aktivitas dan jaringan Anda untuk mendapatkan lebih banyak poin."
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        text = f"{t['poin_title']}\n\n{t['poin_desc']}"
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_jaringan":
-        text = "🌐 **JARINGAN SAYA**\n\nFitur jaringan downline sedang dalam pengembangan."
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        text = f"{t['jaringan_title']}\n\n{t['jaringan_desc']}"
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_reward":
-        text = "🎁 **DAFTAR REWARD**\n\nBelum ada reward yang tersedia saat ini. Stay tuned!"
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        text = f"{t['reward_title']}\n\n{t['reward_desc']}"
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_referral":
-        # Menggunakan nomor akun broker asli dari database
+        # Link referral menggunakan nomor akun broker (`broker_acc`)
         referral_link = f"https://t.me/loyalty_08_bot?start=REF{broker_acc}"
         text = (
-            "🔗 **LINK REFERRAL ANDA**\n\n"
-            "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:\n\n"
+            f"{t['referral_title']}\n\n"
+            f"{t['referral_desc']}\n\n"
             f"`{referral_link}`"
         )
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_bantuan":
-        text = "❓ **BANTUAN**\n\nSilakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi."
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        text = f"{t['bantuan_title']}\n\n{t['bantuan_desc']}"
+        keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_language":
-        text = "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda / Please select your language:"
         keyboard = [
             [InlineKeyboardButton("🇮🇩 Indonesia", callback_data="lang_id"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
             [InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="lang_vi"), InlineKeyboardButton("🇹🇭 ไทย", callback_data="lang_th")],
             [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ", callback_data="lang_km"), InlineKeyboardButton("🇨🇳 中文", callback_data="lang_zh")],
             [InlineKeyboardButton("🇮🇳 भारत (Hindi)", callback_data="lang_hi"), InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
             [InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"), InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-            [InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]
+            [InlineKeyboardButton(t["back"], callback_data="main_menu")]
         ]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.message.edit_text(t["lang_prompt"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data.startswith("lang_"):
         selected_lang = data.split("_")[1]
         
         try:
-            cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, int(user_id)))
+            cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s OR telegram_id::text = %s", (selected_lang, user_id, str(user_id)))
             conn.commit()
         except Exception as e:
-            try:
-                cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, str(user_id)))
-                conn.commit()
-            except Exception as err:
-                print(f"Error saving language: {err}")
+            print(f"Error saving language: {e}")
 
         confirmation_texts = {
             "id": "✅ Bahasa berhasil diubah ke **Indonesia**.",
@@ -212,7 +228,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "th": "✅เปลี่ยนภาษาเป็น **ภาษาไทย** เรียบร้อยแล้ว",
             "km": "✅ បានប្តូរភាសាទៅជា **ភាសាខ្មែរ** ដោយជោគជ័យ។",
             "zh": "✅ 语言已成功更改为 **中文**。",
-            "hi": "✅ भाषा सफलतापूर्वक **Hindi** में बदल दी गई है।",
+            "hi": "✅ भाषा सफलतापूर्वक **Hindi** में बदल दी गई है።",
             "ar": "✅ تم تغيير اللغة بنجاح إلى **العربية**.",
             "fr": "✅ Langue modifiée avec succès en **Français**.",
             "ru": "✅ Язык успешно изменен на **Русский**."
