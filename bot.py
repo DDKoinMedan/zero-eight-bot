@@ -1,148 +1,195 @@
 import os
 import logging
+import psycopg2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
     ConversationHandler,
 )
-from dotenv import load_dotenv
-from database import get_connection
 
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
-
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# Konfigurasi Logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# States for Admin Input Conversation
-SELECT_MEMBER, INPUT_DEPOSIT, INPUT_FEE, CONFIRM_DATA = range(4)
+# Konfigurasi Database (Supabase PostgreSQL) & Bot Token dari Environment Variables
+DATABASE_URL = os.getenv("DATABASE_URL")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Helper: Format USC & USD
-def fmt_money(usc: float) -> str:
-    usd = usc / 100
-    # Format ribuan titik, desimal koma / standar rapi
-    return f"{usc:,.0f} USC (${usd:,.2f})"
+# Admin Utama (Telegram ID)
+ADMIN_IDS = [420150137]
 
-# Helper: Hitung Level Berdasarkan Deposit USC
-def calculate_level(deposit_usc: float) -> int:
-    if deposit_usc >= 500000: return 15
-    elif deposit_usc >= 400000: return 14
-    elif deposit_usc >= 300000: return 12
-    elif deposit_usc >= 150000: return 10
-    elif deposit_usc >= 100000: return 8
-    elif deposit_usc >= 50000: return 6
-    elif deposit_usc >= 30000: return 4
-    elif deposit_usc >= 10000: return 2
-    elif deposit_usc >= 5000: return 1
-    else: return 0
+# Koneksi Database
+conn = psycopg2.connect(DATABASE_URL)
+cur = conn.cursor()
 
-LEVEL_PERCENTAGES = {
-    1: 4.0, 2: 4.0, 3: 2.0, 4: 2.0, 5: 1.0, 6: 1.0, 7: 1.0, 8: 1.0, 9: 1.0,
-    10: 0.5, 11: 0.5, 12: 0.5, 13: 0.5, 14: 0.5, 15: 0.5
+# Tahapan Conversation untuk Pendaftaran
+GET_BROKER, GET_NAME = range(2)
+
+# Kamus Terjemahan Multibahasa
+LANGS = {
+    "id": {
+        "welcome": "🌟 **SELAMAT DATANG DI ZERO EIGHT LOYALTY BOT**",
+        "menu_prompt": "Silakan pilih menu di bawah ini:",
+        "profil": "👤 Profil Saya", "poin": "💰 Poin Saya", "jaringan": "🌐 Jaringan Saya", 
+        "reward": "🎁 Daftar Reward", "referral": "🔗 Link Referral Saya", "language": "🌐 Ganti Bahasa", "bantuan": "❓ Bantuan",
+        "profil_title": "👤 **PROFIL SAYA**", "name": "Nama", "broker": "Akun Broker", "status": "Status", "deposit": "Deposit USC", "levels": "Level Terbuka",
+        "poin_title": "💰 **POIN SAYA**", "poin_desc": "Total Poin Anda: **0 Poin**",
+        "jaringan_title": "🌐 **JARINGAN SAYA**", "jaringan_desc": "Fitur jaringan downline sedang dalam pengembangan.",
+        "reward_title": "🎁 **DAFTAR REWARD**", "reward_desc": "Belum ada reward yang tersedia saat ini. Stay tuned!",
+        "referral_title": "🔗 **LINK REFERRAL ANDA**", "referral_desc": "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:",
+        "bantuan_title": "❓ **BANTUAN**", "bantuan_desc": "Silakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi.",
+        "lang_prompt": "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda:",
+        "back": "🔙 Menu Utama",
+        "need_ref": "⚠️ **AKSES DITOLAK**\n\nAnda harus mendaftar menggunakan **Link Referral** yang valid dari upline Anda untuk mengakses bot ini.",
+        "info_umum": "ℹ️ **INFORMASI UMUM BOT**\n\nIni adalah ZERO EIGHT Loyalty Bot. Untuk mendaftar dan bergabung, silakan dapatkan link referral dari member resmi kami."
+    },
+    "en": {
+        "welcome": "🌟 **WELCOME TO ZERO EIGHT LOYALTY BOT**",
+        "menu_prompt": "Please select an option below:",
+        "profil": "👤 My Profile", "poin": "💰 My Points", "jaringan": "🌐 My Network", 
+        "reward": "🎁 Rewards List", "referral": "🔗 My Referral Link", "language": "🌐 Change Language", "bantuan": "❓ Support",
+        "profil_title": "👤 **MY PROFILE**", "name": "Name", "broker": "Broker Account", "status": "Status", "deposit": "Deposit USC", "levels": "Unlocked Levels",
+        "poin_title": "💰 **MY POINTS**", "poin_desc": "Your Total Points: **0 Points**",
+        "jaringan_title": "🌐 **MY NETWORK**", "jaringan_desc": "Downline network feature is under development.",
+        "reward_title": "🎁 **REWARDS LIST**", "reward_desc": "No rewards available at the moment. Stay tuned!",
+        "referral_title": "🔗 **MY REFERRAL LINK**", "referral_desc": "Share the link below with your friends or partners to join the network:",
+        "bantuan_title": "❓ **SUPPORT**", "bantuan_desc": "Please contact Admin if you encounter any account or transaction issues.",
+        "lang_prompt": "🌐 **SELECT LANGUAGE**\n\nPlease choose your preferred language:",
+        "back": "🔙 Main Menu",
+        "need_ref": "⚠️ **ACCESS DENIED**\n\nYou must register using a valid **Referral Link** from your upline to access this bot.",
+        "info_umum": "ℹ️ **GENERAL BOT INFORMATION**\n\nThis is ZERO EIGHT Loyalty Bot. To register and join, please obtain a referral link from our official members."
+    }
 }
 
-# /start Handler & Registration Check
+# --- Command /start & Sistem Pendaftaran ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE telegram_id = %s", (user.id,))
+    user_id = user.id
+
+    # Cek apakah user sudah terdaftar di database
+    cur.execute("SELECT broker_account, full_name, language FROM users WHERE telegram_id = %s OR telegram_id::text = %s", (user_id, str(user_id)))
     db_user = cur.fetchone()
-    cur.close()
-    conn.close()
 
-    if not db_user:
-        args = context.args
-        upline_ref = args[0].replace("REF", "") if args else None
+    # Jika sudah terdaftar atau merupakan Admin Utama, langsung tampilkan menu utama
+    if db_user or user_id in ADMIN_IDS:
+        lang = db_user[2] if db_user and len(db_user) > 2 and db_user[2] else "id"
+        t = LANGS.get(lang, LANGS["id"])
         
-        # Simpan state sementara di context untuk registrasi
-        context.user_data['reg_upline'] = upline_ref
+        keyboard = [
+            [InlineKeyboardButton(t["profil"], callback_data="menu_profil"), InlineKeyboardButton(t["poin"], callback_data="menu_poin")],
+            [InlineKeyboardButton(t["jaringan"], callback_data="menu_jaringan"), InlineKeyboardButton(t["reward"], callback_data="menu_reward")],
+            [InlineKeyboardButton(t["referral"], callback_data="menu_referral"), InlineKeyboardButton(t["language"], callback_data="menu_language")],
+            [InlineKeyboardButton(t["bantuan"], callback_data="menu_bantuan")]
+        ]
+        await update.message.reply_text(f"{t['welcome']}\n\n{t['menu_prompt']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return ConversationHandler.END
+
+    # Cek parameter referral dari link start (contoh: /start REF999990001)
+    args = context.args
+    if not args or not args[0].startswith("REF"):
+        # Jika tidak pakai link referral dan bukan admin, tolak akses dan tampilkan info umum
+        keyboard = [[InlineKeyboardButton("ℹ️ Informasi Bot", callback_data="info_umum")]]
         await update.message.reply_text(
-            "👋 Selamat datang di **ZERO EIGHT Loyalty Bot**!\n\n"
-            "Silakan ketik **Nama Lengkap** Anda untuk memulai registrasi:"
+            LANGS["id"]["need_ref"], 
+            reply_markup=InlineKeyboardMarkup(keyboard), 
+            parse_mode="Markdown"
         )
-        context.user_data['reg_step'] = 'full_name'
-        return
-    
-    if db_user['status'] == 'pending':
-        await update.message.reply_text("⏳ Akun Anda sedang diverifikasi oleh Admin. Mohon tunggu.")
-        return
+        return ConversationHandler.END
 
-    # Menu Utama
-    text = (
-        f"👋 Halo, {db_user['full_name']}!\n"
-        f"Selamat datang di ZERO EIGHT Loyalty Bot\n\n"
-        f"Akun Broker: {db_user['broker_account']}\n"
-        f"Level Terbuka: {db_user['open_levels']} Level\n\n"
-        f"Pilih menu di bawah:"
+    # Ambil upline broker account dari parameter referral
+    upline_ref = args[0].replace("REF", "")
+    context.user_data["upline"] = upline_ref
+
+    await update.message.reply_text(
+        "👋 Selamat datang di **ZERO EIGHT Loyalty Bot**!\n\n"
+        "Silakan masukkan **Nomor Akun Broker** Anda (hanya berupa angka):",
+        parse_mode="Markdown"
     )
+    return GET_BROKER
+
+async def receive_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    
+    # Validasi: Akun broker harus berupa angka sepenuhnya
+    if not text.isdigit():
+        await update.message.reply_text("❌ Nomor akun broker harus berupa **angka** saja. Silakan masukkan ulang nomor akun broker Anda:")
+        return GET_BROKER
+
+    context.user_data["broker_account"] = text
+    await update.message.reply_text("✅ Akun broker diterima.\n\nSekarang, silakan masukkan **Nama Lengkap** Anda:")
+    return GET_NAME
+
+async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    user_id = update.effective_user.id
+    broker_acc = context.user_data.get("broker_account")
+    upline = context.user_data.get("upline", "-")
+
+    # Simpan data registrasi baru ke Supabase
+    try:
+        cur.execute(
+            "INSERT INTO users (telegram_id, full_name, broker_account, status, deposit_usc, open_levels, language) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (user_id, name, broker_acc, "Verified", 0, 0, "id")
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving registration: {e}")
+        conn.rollback()
+
+    t = LANGS["id"]
     keyboard = [
-        [InlineKeyboardButton("👤 Profil Saya", callback_data="menu_profil"), InlineKeyboardButton("💰 Poin Saya", callback_data="menu_poin")],
-        [InlineKeyboardButton("🌐 Jaringan Saya", callback_data="menu_jaringan"), InlineKeyboardButton("🎁 Daftar Reward", callback_data="menu_reward")],
-        [InlineKeyboardButton("🔗 Link Referral Saya", callback_data="menu_link")],
-        [InlineKeyboardButton("❓ Bantuan", callback_data="menu_bantuan")]
+        [InlineKeyboardButton(t["profil"], callback_data="menu_profil"), InlineKeyboardButton(t["poin"], callback_data="menu_poin")],
+        [InlineKeyboardButton(t["jaringan"], callback_data="menu_jaringan"), InlineKeyboardButton(t["reward"], callback_data="menu_reward")],
+        [InlineKeyboardButton(t["referral"], callback_data="menu_referral"), InlineKeyboardButton(t["language"], callback_data="menu_language")],
+        [InlineKeyboardButton(t["bantuan"], callback_data="menu_bantuan")]
     ]
-    if user.id in ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("🛠️ Panel Admin", callback_data="menu_admin")])
+    
+    await update.message.reply_text(
+        f"🎉 **REGISTRASI BERHASIL!**\n\n"
+        f"Akun Broker: `{broker_acc}`\n"
+        f"Nama: {name}\n\n"
+        f"Silakan pilih menu di bawah:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Pendaftaran dibatalkan.")
+    return ConversationHandler.END
 
-# Menu Callbacks
+
+# --- Menu Handler Interaktif & Multibahasa ---
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
 
-    # 1. Cari data berdasarkan telegram_id untuk mendapatkan nomor akun broker & bahasa
+    # Ambil data user dari database
     db_user = None
     try:
         cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s OR telegram_id::text = %s", (user_id, str(user_id)))
         db_user = cur.fetchone()
     except Exception as e:
-        print(f"Error fetching user: {e}")
+        logger.error(f"Error fetching user: {e}")
 
-    broker_acc = str(db_user[1]) if db_user and db_user[1] else "999990001"
-    lang = db_user[5] if db_user and len(db_user) > 5 and db_user[5] else "id"
+    # Fallback data jika admin utama atau user khusus
+    if not db_user and user_id in ADMIN_IDS:
+        db_user = ("Admin Utama", "999990001", "Administrator", 0, 0, "id")
 
-    # Kamus Terjemahan Teks Menu Utama
-    texts = {
-        "id": {
-            "main_title": "🌟 **SELAMAT DATANG DI MENU UTAMA**\n\nSilakan pilih menu di bawah ini:",
-            "profil": "👤 Profil Saya", "poin": "💰 Poin Saya", "jaringan": "🌐 Jaringan Saya", 
-            "reward": "🎁 Daftar Reward", "referral": "🔗 Link Referral Saya", "language": "🌐 Ganti Bahasa", "bantuan": "❓ Bantuan",
-            "profil_title": "👤 **PROFIL SAYA**", "name": "Nama", "broker": "Akun Broker", "status": "Status", "deposit": "Deposit USC", "levels": "Level Terbuka",
-            "poin_title": "💰 **POIN SAYA**", "poin_desc": "Total Poin Anda: **0 Poin**",
-            "jaringan_title": "🌐 **JARINGAN SAYA**", "jaringan_desc": "Fitur jaringan downline sedang dalam pengembangan.",
-            "reward_title": "🎁 **DAFTAR REWARD**", "reward_desc": "Belum ada reward yang tersedia saat ini. Stay tuned!",
-            "referral_title": "🔗 **LINK REFERRAL ANDA**", "referral_desc": "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:",
-            "bantuan_title": "❓ **BANTUAN**", "bantuan_desc": "Silakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi.",
-            "lang_prompt": "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda:",
-            "back": "🔙 Menu Utama"
-        },
-        "en": {
-            "main_title": "🌟 **WELCOME TO MAIN MENU**\n\nPlease select an option below:",
-            "profil": "👤 My Profile", "poin": "💰 My Points", "jaringan": "🌐 My Network", 
-            "reward": "🎁 Rewards List", "referral": "🔗 My Referral Link", "language": "🌐 Change Language", "bantuan": "❓ Support",
-            "profil_title": "👤 **MY PROFILE**", "name": "Name", "broker": "Broker Account", "status": "Status", "deposit": "Deposit USC", "levels": "Unlocked Levels",
-            "poin_title": "💰 **MY POINTS**", "poin_desc": "Your Total Points: **0 Points**",
-            "jaringan_title": "🌐 **MY NETWORK**", "jaringan_desc": "Downline network feature is under development.",
-            "reward_title": "🎁 **REWARDS LIST**", "reward_desc": "No rewards available at the moment. Stay tuned!",
-            "referral_title": "🔗 **MY REFERRAL LINK**", "referral_desc": "Share the link below with your friends or partners to join the network:",
-            "bantuan_title": "❓ **SUPPORT**", "bantuan_desc": "Please contact Admin if you encounter any account or transaction issues.",
-            "lang_prompt": "🌐 **SELECT LANGUAGE**\n\nPlease choose your preferred language:",
-            "back": "🔙 Main Menu"
-        }
-    }
-    # Fallback ke Indonesia jika bahasa lain belum diatur kamusnya
-    t = texts.get(lang, texts["id"])
+    name, broker_acc, status, deposit, levels, lang = db_user if db_user else ("Guest", "00000000", "Unverified", 0, 0, "id")
+    if not lang:
+        lang = "id"
+
+    t = LANGS.get(lang, LANGS["id"])
 
     if data == "main_menu":
         keyboard = [
@@ -151,22 +198,21 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(t["referral"], callback_data="menu_referral"), InlineKeyboardButton(t["language"], callback_data="menu_language")],
             [InlineKeyboardButton(t["bantuan"], callback_data="menu_bantuan")]
         ]
-        await query.message.edit_text(t["main_title"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.message.edit_text(f"{t['welcome']}\n\n{t['menu_prompt']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "info_umum":
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(LANGS["id"]["info_umum"], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_profil":
-        if db_user:
-            name, broker, status, deposit, levels, _ = db_user
-            text = (
-                f"{t['profil_title']}\n\n"
-                f"{t['name']}: {name}\n"
-                f"{t['broker']}: {broker}\n"
-                f"{t['status']}: {status}\n"
-                f"{t['deposit']}: {deposit}\n"
-                f"{t['levels']}: {levels} Level"
-            )
-        else:
-            text = f"{t['profil_title']}\n\nData profil tidak ditemukan."
-            
+        text = (
+            f"{t['profil_title']}\n\n"
+            f"{t['name']}: {name}\n"
+            f"{t['broker']}: {broker_acc}\n"
+            f"{t['status']}: {status}\n"
+            f"{t['deposit']}: {deposit}\n"
+            f"{t['levels']}: {levels} Level"
+        )
         keyboard = [[InlineKeyboardButton(t["back"], callback_data="main_menu")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -186,7 +232,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_referral":
-        # Link referral menggunakan nomor akun broker (`broker_acc`)
+        # Link referral menggunakan nomor akun broker pengguna yang benar
         referral_link = f"https://t.me/loyalty_08_bot?start=REF{broker_acc}"
         text = (
             f"{t['referral_title']}\n\n"
@@ -219,7 +265,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s OR telegram_id::text = %s", (selected_lang, user_id, str(user_id)))
             conn.commit()
         except Exception as e:
-            print(f"Error saving language: {e}")
+            logger.error(f"Error updating language: {e}")
 
         confirmation_texts = {
             "id": "✅ Bahasa berhasil diubah ke **Indonesia**.",
@@ -228,235 +274,39 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "th": "✅เปลี่ยนภาษาเป็น **ภาษาไทย** เรียบร้อยแล้ว",
             "km": "✅ បានប្តូរភាសាទៅជា **ភាសាខ្មែរ** ដោយជោគជ័យ។",
             "zh": "✅ 语言已成功更改为 **中文**。",
-            "hi": "✅ भाषा सफलतापूर्वक **Hindi** में बदल दी गई है።",
+            "hi": "✅ भाषा सफलतापूर्वक **Hindi** में बदल दी गई है।",
             "ar": "✅ تم تغيير اللغة بنجاح إلى **العربية**.",
             "fr": "✅ Langue modifiée avec succès en **Français**.",
             "ru": "✅ Язык успешно изменен на **Русский**."
         }
         
-        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        new_t = LANGS.get(selected_lang, LANGS["id"])
+        keyboard = [[InlineKeyboardButton(new_t["back"], callback_data="main_menu")]]
         await query.message.edit_text(
             confirmation_texts.get(selected_lang, "✅ Language updated."), 
             reply_markup=InlineKeyboardMarkup(keyboard), 
             parse_mode="Markdown"
         )
 
-# Admin Input Flow Handler using ConversationHandler
-async def admin_input_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT broker_account, full_name FROM users WHERE status = 'verified'")
-    members = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    if not members:
-        await query.message.reply_text("Tidak ada member terverifikasi.")
-        return ConversationHandler.END
-
-    text = "🛠️ **INPUT DATA HARIAN**\n\nSilakan ketik **Nomor Akun Broker** member yang ingin diinput datanya:"
-    await query.message.reply_text(text, parse_mode="Markdown")
-    return SELECT_MEMBER
-
-async def admin_get_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    broker_acc = update.message.text.strip()
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE broker_account = %s", (broker_acc,))
-    member = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not member:
-        await update.message.reply_text("Nomor Akun Broker tidak ditemukan. Ketik ulang:")
-        return SELECT_MEMBER
-
-    context.user_data['target_member'] = member
-    await update.message.reply_text(
-        f"Member dipilih: {member['full_name']} ({member['broker_account']})\n\n"
-        f"Masukkan **Deposit / Nilai Follow Terbaru (dalam USC)**:"
-    )
-    return INPUT_DEPOSIT
-
-async def admin_get_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        deposit_usc = float(update.message.text.strip())
-    except ValueError:
-        await update.message.reply_text("Masukkan angka yang valid dalam USC:")
-        return INPUT_DEPOSIT
-
-    context.user_data['new_deposit'] = deposit_usc
-    await update.message.reply_text(
-        f"Kamu input {deposit_usc:,.0f} USC ({fmt_money(deposit_usc)}).\n\n"
-        f"Masukkan **Performance Fee (dalam USC)**:"
-    )
-    return INPUT_FEE
-
-async def admin_get_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        fee_usc = float(update.message.text.strip())
-    except ValueError:
-        await update.message.reply_text("Masukkan angka Performance Fee yang valid dalam USC:")
-        return INPUT_FEE
-
-    context.user_data['new_fee'] = fee_usc
-    member = context.user_data['target_member']
-    new_dep = context.user_data['new_deposit']
-    
-    old_level = member['open_levels']
-    new_level = calculate_level(new_dep)
-    level_diff_str = f"Lev Terbuka jadi: {new_level} Level (Sebelumnya: {old_level} Level)"
-    if new_level > old_level: level_diff_str += " - NAIK ⬆️"
-    elif new_level < old_level: level_diff_str += " - TURUN ⬇️"
-
-    pool_20 = fee_usc * 0.20
-    pool_20_pts = pool_20 / 100
-
-    preview_text = (
-        f"🔍 **PREVIEW SEBELUM SIMPAN:**\n\n"
-        f"Member: {member['full_name']} ({member['broker_account']})\n"
-        f"Deposit: {fmt_money(new_dep)}\n"
-        f"-> {level_diff_str}\n\n"
-        f"Performance Fee: {fmt_money(fee_usc)}\n"
-        f"-> Total Poin yang dibagi ke jaringan (20%):\n"
-        f"{fmt_money(pool_20)} = {pool_20_pts:.2f} Poin\n\n"
-        f"Apakah data sudah benar?"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Ya, Simpan", callback_data="confirm_save"), InlineKeyboardButton("❌ Batal", callback_data="cancel_save")]
-    ]
-    await update.message.reply_text(preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    return CONFIRM_DATA
-
-async def admin_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "cancel_save":
-        await query.message.edit_text("Input data dibatalkan.")
-        return ConversationHandler.END
-
-    member = context.user_data['target_member']
-    new_dep = context.user_data['new_deposit']
-    fee_usc = context.user_data['new_fee']
-    new_level = calculate_level(new_dep)
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    # Update member deposit & level + Log follow
-    cur.execute("""
-        INSERT INTO follow_logs (broker_account, old_deposit, new_deposit, old_level, new_level, changed_by)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (member['broker_account'], member['deposit_usc'], new_dep, member['open_levels'], new_level, f"Admin {query.from_user.id}"))
-
-    cur.execute("""
-        UPDATE users SET deposit_usc = %s, open_levels = %s WHERE broker_account = %s
-    """, (new_dep, new_level, member['broker_account']))
-
-    # Distribusi Komisi Jaringan (15 Level)
-    curr_upline = member['upline_broker']
-    level = 1
-    while curr_upline and level <= 15:
-        cur.execute("SELECT * FROM users WHERE broker_account = %s", (curr_upline,))
-        up_user = cur.fetchone()
-        if not up_user:
-            break
-
-        # Cek apakah level upline terbuka
-        if up_user['open_levels'] >= level:
-            pct = LEVEL_PERCENTAGES[level]
-            reward_usc = fee_usc * (pct / 100)
-            reward_pts = reward_usc / 100
-
-            cur.execute("""
-                INSERT INTO transactions (source_broker, recipient_broker, level, perf_fee_usc, percentage, reward_usc, reward_points)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (member['broker_account'], curr_upline, level, fee_usc, pct, reward_usc, reward_pts))
-            
-            # Kirim Notifikasi ke Upline jika telegram_id ada
-            try:
-                notif_text = (
-                    f"🔔 **Poin Baru Masuk!**\n\n"
-                    f"Kamu dapat +{reward_pts:.2f} Poin\n"
-                    f"Dari: {member['full_name']} - Lv {level}\n"
-                    f"Performance Fee: {fmt_money(fee_usc)}\n"
-                    f"Persentase: {pct}%\n\n"
-                    f"Cek di /poin"
-                )
-                await context.bot.send_message(chat_id=up_user['telegram_id'], text=notif_text, parse_mode="Markdown")
-            except Exception:
-                pass
-
-        curr_upline = up_user['upline_broker']
-        level += 1
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    await query.message.edit_text("✅ Data berhasil disimpan dan komisi jaringan telah didistribusikan!")
-    return ConversationHandler.END
-
-# Pendaftaran Member Baru Step-by-Step
-async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    step = context.user_data.get('reg_step')
-
-    if not step:
-        return
-
-    if step == 'full_name':
-        context.user_data['reg_name'] = text
-        context.user_data['reg_step'] = 'broker_acc'
-        await update.message.reply_text("Masukkan **Nomor Akun Broker** Anda (contoh: MT4/MT5 ID / Akun CopyTrade):")
-    elif step == 'broker_acc':
-        context.user_data['reg_broker'] = text
-        
-        user = update.effective_user
-        conn = get_connection()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                INSERT INTO users (telegram_id, username, full_name, broker_account, upline_broker, status)
-                VALUES (%s, %s, %s, %s, %s, 'pending')
-            """, (user.id, user.username, context.user_data['reg_name'], text, context.user_data.get('reg_upline')))
-            conn.commit()
-            await update.message.reply_text("✅ Pendaftaran berhasil! Akun Anda sedang menunggu verifikasi Admin.")
-            context.user_data.clear()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Error saat registrasi: {e}")
-            await update.message.reply_text(f"❌ Terjadi kesalahan database: {str(e)}\nSilakan mulai ulang dengan /start.")
-        finally:
-            cur.close()
-            conn.close()
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    # Conversation Handler untuk Admin Input Data
-    admin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_input_start, pattern="^admin_input_start$")],
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
         states={
-            SELECT_MEMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_member)],
-            INPUT_DEPOSIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_deposit)],
-            INPUT_FEE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_fee)],
-            CONFIRM_DATA: [CallbackQueryHandler(admin_confirm_save, pattern="^(confirm_save|cancel_save)$")],
+            GET_BROKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broker)],
+            GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
         },
-        fallbacks=[],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(admin_conv)
+    app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(menu_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, register_handler))
 
-    print("Bot is running...")
+    logger.info("Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
