@@ -101,6 +101,16 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
+    # Ambil data user beserta bahasa pilihannya dari database
+    try:
+        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels, language FROM users WHERE telegram_id = %s", (user_id,))
+        db_user = cur.fetchone()
+    except Exception as e:
+        db_user = None
+
+    lang = db_user[5] if db_user and len(db_user) > 5 and db_user[5] else "id"
+    broker_acc = db_user[1] if db_user and db_user[1] else str(user_id)
+
     if data == "main_menu":
         text = (
             "🌟 **SELAMAT DATANG DI MENU UTAMA**\n\n"
@@ -115,12 +125,8 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_profil":
-        # Ambil data profil dari database Supabase
-        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (user_id,))
-        db_user = cur.fetchone()
-        
         if db_user:
-            name, broker, status, deposit, levels = db_user
+            name, broker, status, deposit, levels, _ = db_user
             text = (
                 f"👤 **PROFIL SAYA**\n\n"
                 f"Nama: {name}\n"
@@ -151,8 +157,8 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "menu_referral":
-        # Menggunakan username bot yang benar: loyalty_08_bot
-        referral_link = f"https://t.me/loyalty_08_bot?start=REF{user_id}"
+        # Kembali menggunakan nomor akun broker sebagai referensi link
+        referral_link = f"https://t.me/loyalty_08_bot?start=REF{broker_acc}"
         text = (
             "🔗 **LINK REFERRAL ANDA**\n\n"
             "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:\n\n"
@@ -181,7 +187,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("lang_"):
         selected_lang = data.split("_")[1]
         
-        # Simpan preferensi bahasa ke database Supabase
+        # Simpan pilihan bahasa ke database Supabase
         try:
             cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, user_id))
             conn.commit()
