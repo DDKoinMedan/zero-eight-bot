@@ -107,7 +107,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_user = cur.fetchone()
 
     if data == "menu_profil":
-        link = f"https://t.me/{context.bot.username}?start=REF{db_user['broker_account']}"
+        link = f"https://t.me/{loyalty_08_bot}?start=REF{db_user['broker_account']}"
         text = (
             f"👤 **PROFIL SAYA**\n\n"
             f"Nama: {db_user['full_name']}\n"
