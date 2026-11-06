@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Konfigurasi Database (Supabase PostgreSQL) & Bot Token dari Environment Variables
 DATABASE_URL = os.getenv("DATABASE_URL")
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 
 # Admin Utama (Telegram ID)
 ADMIN_IDS = [420150137]
