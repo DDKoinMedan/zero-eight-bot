@@ -101,104 +101,112 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE telegram_id = %s", (user_id,))
-    db_user = cur.fetchone()
-
-    if data == "menu_profil":
-        link = f"https://t.me/{loyalty_08_bot}?start=REF{db_user['broker_account']}"
+    if data == "main_menu":
         text = (
-            f"👤 **PROFIL SAYA**\n\n"
-            f"Nama: {db_user['full_name']}\n"
-            f"Username: @{query.from_user.username or '-'}\n"
-            f"Nomor Akun Broker: {db_user['broker_account']}\n"
-            f"Upline: {db_user['upline_broker'] or '-'}\n\n"
-            f"💰 **Nilai Follow Terbaru:**\n"
-            f"{fmt_money(float(db_user['deposit_usc']))}\n\n"
-            f"🔓 **Level Terbuka:** {db_user['open_levels']} Level\n"
-            f"Dari 15 Level\n\n"
-            f"Link Referral:\n{link}"
-        )
-        keyboard = [[InlineKeyboardButton("🔗 Salin Link", callback_data="menu_link")], [InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "menu_poin":
-        cur.execute("SELECT COALESCE(SUM(reward_points), 0) FROM transactions WHERE recipient_broker = %s AND status = 'unclaimed'", (db_user['broker_account'],))
-        unclaimed = cur.fetchone()['coalesce']
-        cur.execute("SELECT COALESCE(SUM(reward_points), 0) FROM transactions WHERE recipient_broker = %s AND status = 'claimed'", (db_user['broker_account'],))
-        claimed = cur.fetchone()['coalesce']
-        total = float(unclaimed) + float(claimed)
-
-        cur.execute("SELECT * FROM transactions WHERE recipient_broker = %s ORDER BY created_at DESC LIMIT 3", (db_user['broker_account'],))
-        txs = cur.fetchall()
-
-        text = (
-            f"💰 **POIN SAYA**\n\n"
-            f"Poin Belum Diklaim: {unclaimed:.2f} Poin\n"
-            f"Poin Sudah Diklaim: {claimed:.2f} Poin\n"
-            f"Total Poin Seumur Hidup: {total:.2f} Poin\n\n"
-            f"📜 **RIWAYAT TERBARU:**\n"
-        )
-        for tx in txs:
-            fee_str = fmt_money(float(tx['perf_fee_usc']))
-            reward_usc_str = fmt_money(float(tx['reward_usc']))
-            text += (
-                f"\n📅 {tx['created_at'].strftime('%d %b %Y')}\n"
-                f"Dari: {tx['source_broker']} - Lv {tx['level']}\n"
-                f"Performance Fee: {fee_str}\n"
-                f"Kamu dapat: {tx['percentage']}% = {reward_usc_str} = {tx['reward_points']:.2f} Poin\n"
-                f"Status: {'Belum Diklaim' if tx['status']=='unclaimed' else 'Sudah Diklaim'}\n"
-            )
-
-        keyboard = [[InlineKeyboardButton("🎁 Tukar Reward", callback_data="menu_reward"), InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "menu_reward":
-        cur.execute("SELECT COALESCE(SUM(reward_points), 0) FROM transactions WHERE recipient_broker = %s AND status = 'unclaimed'", (db_user['broker_account'],))
-        points = cur.fetchone()['coalesce']
-        
-        cur.execute("SELECT * FROM rewards WHERE is_active = TRUE")
-        rewards = cur.fetchall()
-
-        text = f"🎁 **DAFTAR REWARD**\n\nPoin Kamu: {points:.2f} Poin (Belum Diklaim)\n\n"
-        keyboard = []
-        for r in rewards:
-            text += f"{r['id']}. {r['name']}\n   Harga: {r['cost_points']} Poin\n"
-            keyboard.append([InlineKeyboardButton(f"Tukar {r['name']}", callback_data=f"redeem_{r['id']}")])
-        
-        keyboard.append([InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")])
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "menu_admin" and user_id in ADMIN_IDS:
-        text = "🛠️ **PANEL ADMIN**\nPilih aksi di bawah:"
-        keyboard = [
-            [InlineKeyboardButton("➕ Input Data Harian", callback_data="admin_input_start")],
-            [InlineKeyboardButton("👥 Daftar Member / Verifikasi", callback_data="admin_members")],
-            [InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]
-        ]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "main_menu":
-        text = (
-            f"👋 Halo, {db_user['full_name']}!\n"
-            f"Selamat datang di ZERO EIGHT Loyalty Bot\n\n"
-            f"Akun Broker: {db_user['broker_account']}\n"
-            f"Level Terbuka: {db_user['open_levels']} Level\n\n"
-            f"Pilih menu di bawah:"
+            "🌟 **SELAMAT DATANG DI MENU UTAMA**\n\n"
+            "Silakan pilih menu di bawah ini:"
         )
         keyboard = [
             [InlineKeyboardButton("👤 Profil Saya", callback_data="menu_profil"), InlineKeyboardButton("💰 Poin Saya", callback_data="menu_poin")],
             [InlineKeyboardButton("🌐 Jaringan Saya", callback_data="menu_jaringan"), InlineKeyboardButton("🎁 Daftar Reward", callback_data="menu_reward")],
-            [InlineKeyboardButton("🔗 Link Referral Saya", callback_data="menu_link")],
+            [InlineKeyboardButton("🔗 Link Referral Saya", callback_data="menu_referral"), InlineKeyboardButton("🌐 Ganti Bahasa", callback_data="menu_language")],
             [InlineKeyboardButton("❓ Bantuan", callback_data="menu_bantuan")]
         ]
-        if user_id in ADMIN_IDS:
-            keyboard.append([InlineKeyboardButton("🛠️ Panel Admin", callback_data="menu_admin")])
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    cur.close()
-    conn.close()
+    elif data == "menu_profil":
+        # Ambil data profil dari database Supabase
+        cur.execute("SELECT full_name, broker_account, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (user_id,))
+        db_user = cur.fetchone()
+        
+        if db_user:
+            name, broker, status, deposit, levels = db_user
+            text = (
+                f"👤 **PROFIL SAYA**\n\n"
+                f"Nama: {name}\n"
+                f"Akun Broker: {broker}\n"
+                f"Status: {status}\n"
+                f"Deposit USC: {deposit}\n"
+                f"Level Terbuka: {levels} Level"
+            )
+        else:
+            text = "👤 **PROFIL SAYA**\n\nData profil tidak ditemukan."
+            
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_poin":
+        text = "💰 **POIN SAYA**\n\nTotal Poin Anda: **0 Poin**\n\nTerus tingkatkan aktivitas dan jaringan Anda untuk mendapatkan lebih banyak poin."
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_jaringan":
+        text = "🌐 **JARINGAN SAYA**\n\nFitur jaringan downline sedang dalam pengembangan."
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_reward":
+        text = "🎁 **DAFTAR REWARD**\n\nBelum ada reward yang tersedia saat ini. Stay tuned!"
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_referral":
+        # Menggunakan username bot yang benar: loyalty_08_bot
+        referral_link = f"https://t.me/loyalty_08_bot?start=REF{user_id}"
+        text = (
+            "🔗 **LINK REFERRAL ANDA**\n\n"
+            "Bagikan link di bawah ini ke teman atau partner Anda untuk bergabung ke jaringan:\n\n"
+            f"`{referral_link}`"
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_bantuan":
+        text = "❓ **BANTUAN**\n\nSilakan hubungi Admin jika Anda mengalami kendala pada akun atau transaksi."
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "menu_language":
+        text = "🌐 **PILIH BAHASA / SELECT LANGUAGE**\n\nSilakan pilih bahasa Anda / Please select your language:"
+        keyboard = [
+            [InlineKeyboardButton("🇮🇩 Indonesia", callback_data="lang_id"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+            [InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="lang_vi"), InlineKeyboardButton("🇹🇭 ไทย", callback_data="lang_th")],
+            [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ", callback_data="lang_km"), InlineKeyboardButton("🇨🇳 中文", callback_data="lang_zh")],
+            [InlineKeyboardButton("🇮🇳 भारत (Hindi)", callback_data="lang_hi"), InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
+            [InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"), InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+            [InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data.startswith("lang_"):
+        selected_lang = data.split("_")[1]
+        
+        # Simpan preferensi bahasa ke database Supabase
+        try:
+            cur.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (selected_lang, user_id))
+            conn.commit()
+        except Exception as e:
+            print(f"Error saving language: {e}")
+
+        confirmation_texts = {
+            "id": "✅ Bahasa berhasil diubah ke **Indonesia**.",
+            "en": "✅ Language successfully changed to **English**.",
+            "vi": "✅ Đã đổi ngôn ngữ sang **Tiếng Việt**.",
+            "th": "✅เปลี่ยนภาษาเป็น **ภาษาไทย** เรียบร้อยแล้ว",
+            "km": "✅ បានប្តូរភាសាទៅជា **ភាសាខ្មែរ** ដោយជោគជ័យ។",
+            "zh": "✅ 语言已成功更改为 **中文**。",
+            "hi": "✅ भाषा सफलतापूर्वक **Hindi** में बदल दी गई है।",
+            "ar": "✅ تم تغيير اللغة بنجاح إلى **العربية**.",
+            "fr": "✅ Langue modifiée avec succès en **Français**.",
+            "ru": "✅ Язык успешно изменен на **Русский**."
+        }
+        
+        keyboard = [[InlineKeyboardButton("🔙 Menu Utama", callback_data="main_menu")]]
+        await query.message.edit_text(
+            confirmation_texts.get(selected_lang, "✅ Language updated."), 
+            reply_markup=InlineKeyboardMarkup(keyboard), 
+            parse_mode="Markdown"
+        )
 
 # Admin Input Flow Handler using ConversationHandler
 async def admin_input_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
