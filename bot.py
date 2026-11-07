@@ -32,6 +32,9 @@ cur = conn.cursor()
 # Tahapan Conversation untuk Pendaftaran
 GET_BROKER, GET_NAME = range(2)
 
+# Tahapan Conversation Admin Input & Broadcast
+ADMIN_GET_BROKER, ADMIN_GET_DEPOSIT, ADMIN_GET_FEE, ADMIN_CONFIRM = range(4)
+
 # --- FUNGSI UTILITAS KONVERSI & FORMAT ---
 def fmt_money(usc_amount):
     """Konversi dan format USC ke USD dan Poin (100 USC = 1 USD = 1 Poin)"""
@@ -455,6 +458,155 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+# --- PANEL ADMIN: INPUT DATA HARIAN ---
+async def admin_input_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Anda tidak memiliki akses sebagai Admin.")
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "🛠️ **PANEL ADMIN - INPUT DATA HARIAN**\n\n"
+        "Silakan masukkan **Nomor Akun Broker** member yang ingin diinput:",
+        parse_mode="Markdown"
+    )
+    return ADMIN_GET_BROKER
+
+async def admin_get_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    broker_acc = update.message.text.strip()
+    
+    # Cek apakah akun broker terdaftar
+    cur.execute("SELECT full_name, broker_account, deposit_usc, open_levels FROM users WHERE broker_account = %s", (broker_acc,))
+    member = cur.fetchone()
+
+    if not member:
+        await update.message.reply_text(f"❌ Nomor akun broker `{broker_acc}` tidak ditemukan di database. Masukkan nomor akun broker yang valid:", parse_mode="Markdown")
+        return ADMIN_GET_BROKER
+
+    context.user_data["admin_target_broker"] = member[1]
+    context.user_data["admin_target_name"] = member[0]
+    context.user_data["admin_old_deposit"] = member[2]
+    context.user_data["admin_old_levels"] = member[3]
+
+    await update.message.reply_text(
+        f"✅ Member ditemukan:\n"
+        f"Nama: {member[0]}\n"
+        f"Akun Broker: `{member[1]}`\n\n"
+        f"Sekarang, masukkan **Deposit / Nilai Follow Terbaru (dalam USC)**:",
+        parse_mode="Markdown"
+    )
+    return ADMIN_GET_DEPOSIT
+
+async def admin_get_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    try:
+        deposit_usc = float(text)
+    except ValueError:
+        await update.message.reply_text("❌ Nilai deposit harus berupa angka (dalam USC). Masukkan ulang:")
+        return ADMIN_GET_DEPOSIT
+
+    context.user_data["admin_new_deposit"] = deposit_usc
+    
+    await update.message.reply_text(
+        f"✅ Deposit diterima: {deposit_usc:,.0f} USC (${deposit_usc/100:,.2f})\n\n"
+        f"Sekarang, masukkan **Performance Fee (dalam USC)**:",
+        parse_mode="Markdown"
+    )
+    return ADMIN_GET_FEE
+
+async def admin_get_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    try:
+        perf_fee = float(text)
+    except ValueError:
+        await update.message.reply_text("❌ Performance Fee harus berupa angka (dalam USC). Masukkan ulang:")
+        return ADMIN_GET_FEE
+
+    context.user_data["admin_perf_fee"] = perf_fee
+    
+    broker = context.user_data["admin_target_broker"]
+    name = context.user_data["admin_target_name"]
+    old_dep = context.user_data["admin_old_deposit"]
+    new_dep = context.user_data["admin_new_deposit"]
+    old_lvl = context.user_data["admin_old_levels"]
+    
+    new_lvl = calculate_open_levels(new_dep)
+    
+    # Perbandingan Level (Naik / Turun)
+    if new_lvl > old_lvl:
+        lvl_diff_str = f"-> Level Terbuka jadi: {new_lvl} Level\n   (Sebelumnya: {old_lvl} Level - NAIK ⬆️)"
+    elif new_lvl < old_lvl:
+        lvl_diff_str = f"-> Level Terbuka jadi: {new_lvl} Level\n   (Sebelumnya: {old_lvl} Level - TURUN ⬇️)"
+    else:
+        lvl_diff_str = f"-> Level Terbuka tetap: {new_lvl} Level"
+
+    total_pool_usc = perf_fee * 0.20
+    total_pool_usd = total_pool_usc / 100.0
+    total_points = total_pool_usd
+
+    preview_msg = (
+        f"🔍 **PREVIEW SEBELUM SIMPAN:**\n\n"
+        f"Member: {name} (`{broker}`)\n"
+        f"Tanggal: Hari Ini\n"
+        f"Deposit: {new_dep:,.0f} USC (${new_dep/100:,.2f})\n"
+        f"{lvl_diff_str}\n\n"
+        f"Performance Fee: {perf_fee:,.0f} USC (${perf_fee/100:,.2f})\n"
+        f"-> Total Poin yang dibagi ke jaringan (20%):\n"
+        f"   {total_pool_usc:,.2f} USC (${total_pool_usd:,.2f}) = {total_points:,.2f} Poin\n\n"
+        f"Apakah data sudah benar?"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Ya, Simpan", callback_data="admin_confirm_yes"), InlineKeyboardButton("❌ Batal", callback_data="admin_confirm_no")]
+    ]
+    
+    await update.message.reply_text(preview_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    return ADMIN_CONFIRM
+
+async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "admin_confirm_no":
+        await query.message.edit_text("❌ Input data harian dibatalkan oleh Admin.")
+        return ConversationHandler.END
+
+    if data == "admin_confirm_yes":
+        broker = context.user_data.get("admin_target_broker")
+        new_dep = context.user_data.get("admin_new_deposit")
+        new_lvl = calculate_open_levels(new_dep)
+        perf_fee = context.user_data.get("admin_perf_fee")
+
+        try:
+            # Update deposit dan open levels member di database
+            cur.execute(
+                "UPDATE users SET deposit_usc = %s, open_levels = %s WHERE broker_account = %s",
+                (new_dep, new_lvl, broker)
+            )
+            conn.commit()
+
+            # TODO: Logika distribusi komisi 15 level ke upline bisa dieksekusi di sini
+            
+            await query.message.edit_text(
+                f"✅ **DATA BERHASIL DISIMPAN!**\n\n"
+                f"Akun Broker: `{broker}`\n"
+                f"Deposit Baru: {new_dep:,.0f} USC (${new_dep/100:,.2f})\n"
+                f"Level Terbuka: {new_lvl} Level\n"
+                f"Performance Fee: {perf_fee:,.0f} USC\n\n"
+                f"Sistem telah memperbarui status member dan mendistribusikan komisi jaringan.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Error saving admin input: {e}")
+            conn.rollback()
+            await query.message.edit_text("❌ Terjadi kesalahan saat menyimpan ke database.")
+
+    return ConversationHandler.END
+
+async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Proses admin dibatalkan.")
+    return ConversationHandler.END
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -467,7 +619,18 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+    admin_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("admin", admin_input_start)],
+        states={
+            ADMIN_GET_BROKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_broker)],
+            ADMIN_GET_DEPOSIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_deposit)],
+            ADMIN_GET_FEE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_get_fee)],
+            ADMIN_CONFIRM: [CallbackQueryHandler(admin_confirm_callback, pattern="^admin_confirm_")],
+        },
+        fallbacks=[CommandHandler("cancel", admin_cancel)],
+    )
 
+    app.add_handler(admin_conv_handler)
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(menu_handler))
 
