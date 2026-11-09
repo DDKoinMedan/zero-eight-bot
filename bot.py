@@ -494,7 +494,7 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     # Ganti dengan Token Bot Telegram Anda dari @BotFather
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "MASUKKAN_TOKEN_BOT_ANDA_DISINI")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "9295610891:AAHOL3Sd2blRnhqt6e9eRwWGJJYx4hJA3gM")
     
     app = ApplicationBuilder().token(TOKEN).build()
 
