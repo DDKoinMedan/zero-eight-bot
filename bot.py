@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Daftar Telegram ID Admin (Sesuaikan dengan ID Telegram Anda)
-ADMIN_IDS = [777777001]
+ADMIN_IDS = [420150137]
 
 # Koneksi ke Database Supabase PostgreSQL
 try:
@@ -535,7 +535,7 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==========================================
 
 def main():
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "MASUKKAN_TOKEN_BOT_ANDA_DISINI")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "9295610891:AAHOL3Sd2blRnhqt6e9eRwWGJJYx4hJA3gM")
     
     app = ApplicationBuilder().token(TOKEN).build()
 
