@@ -20,11 +20,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- KONFIGURASI DATABASE & ADMIN ---
-# Pastikan DATABASE_URL sudah diatur di Environment Variable (Railway/Lokal)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Daftar Telegram ID Admin (Ganti dengan ID Telegram Anda yang sebenarnya)
-ADMIN_IDS = [420150137]  # Contoh Telegram ID Admin
+# Daftar Telegram ID Admin (Sesuaikan dengan ID Telegram Anda)
+ADMIN_IDS = [777777001]
 
 # Koneksi ke Database Supabase PostgreSQL
 try:
@@ -35,32 +34,17 @@ except Exception as e:
     logger.error(f"❌ Gagal terhubung ke Database: {e}")
 
 # --- STATE CONVERSATION ---
-# State untuk Pendaftaran Member
 ASK_BROKER, ASK_NAME = range(2)
-# State untuk Panel Admin Input Rekap Harian
 ADMIN_BROKER, ADMIN_DEPOSIT, ADMIN_FEE = range(2, 5)
 
 # Persentase Komisi 15 Level
 COMMISSION_RATES = {
-    1: 0.04,   # 4%
-    2: 0.04,   # 4%
-    3: 0.02,   # 2%
-    4: 0.02,   # 2%
-    5: 0.01,   # 1%
-    6: 0.01,   # 1%
-    7: 0.01,   # 1%
-    8: 0.01,   # 1%
-    9: 0.01,   # 1%
-    10: 0.005, # 0.5%
-    11: 0.005, # 0.5%
-    12: 0.005, # 0.5%
-    13: 0.005, # 0.5%
-    14: 0.005, # 0.5%
-    15: 0.005  # 0.5%
+    1: 0.04, 2: 0.04, 3: 0.02, 4: 0.02, 5: 0.01,
+    6: 0.01, 7: 0.01, 8: 0.01, 9: 0.01, 10: 0.005,
+    11: 0.005, 12: 0.005, 13: 0.005, 14: 0.005, 15: 0.005
 }
 
 def calculate_open_levels(deposit_usc):
-    """Menentukan jumlah level terbuka berdasarkan Deposit/Follow USC pribadi"""
     dep = float(deposit_usc)
     if dep >= 500000: return 15
     elif dep >= 400000: return 14
@@ -75,39 +59,62 @@ def calculate_open_levels(deposit_usc):
 
 
 # ==========================================
-# 1. FITUR PENDAFTARAN MEMBER (HYBRID)
+# 1. FITUR AKSES, PENDAFTARAN & MENU UTAMA
 # ==========================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     telegram_id = user.id
 
-    # Cek apakah user sudah terdaftar
-    cur.execute("SELECT broker_account, status FROM users WHERE telegram_id = %s", (telegram_id,))
+    # Cek apakah user sudah terdaftar di database
+    cur.execute("SELECT broker_account, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (telegram_id,))
     existing = cur.fetchone()
 
     if existing:
-        broker, status = existing
-        status_text = "✅ Terverifikasi & Aktif" if status == "Verified" else "⏳ Menunggu Verifikasi/Deposit Admin (Unverified)"
-        await update.message.reply_text(
+        broker, status, deposit, levels = existing
+        status_text = "✅ Terverifikasi & Aktif" if status == "Verified" else "⏳ Unverified (Menunggu verifikasi admin)"
+        
+        welcome_msg = (
             f"👋 Halo kembali, **{user.first_name}**!\n\n"
             f"• Akun Broker: `{broker}`\n"
-            f"• Status: {status_text}\n\n"
-            f"Gunakan /menu untuk melihat opsi lainnya.",
-            parse_mode="Markdown"
+            f"• Status: {status_text}\n"
+            f"• Total Deposit: `{deposit:,.0f} USC` (${deposit / 100:,.2f})\n"
+            f"• Level Terbuka: `{levels} Level`\n\n"
+            f"Pilih menu di bawah atau gunakan /menu:"
         )
+        await update.message.reply_text(welcome_msg, parse_mode="Markdown")
         return ConversationHandler.END
 
-    # Cek apakah ada parameter referral di link (/start ref_123456)
-    upline_broker = "-"
-    if context.args:
-        upline_broker = context.args[0].strip()
+    # ATURAN: Jika diakses TANPA link referral (tidak ada context.args)
+    if not context.args:
+        intro_text = (
+            "🖲️ **Selamat Datang di Zero Eight Bot**\n\n"
+            "🌐 *Zero Eight Bot adalah sistem otomatis untuk menghitung, mencatat, dan memantau poin loyalitas anggota Komunitas ZeroEight.*\n\n"
+            "⚠️ **PERHATIAN**\n"
+            "Untuk menjaga validitas data dan poin komunitas, seluruh fitur bot hanya dapat digunakan oleh anggota yang telah melakukan registrasi melalui link referral resmi ZeroEight.\n\n"
+            "🔒 Jika Anda belum terdaftar, silakan lakukan registrasi terlebih dahulu menggunakan referral yang valid."
+        )
+        
+        keyboard = [[InlineKeyboardButton("🌐 Ganti Bahasa / Change Language", callback_data="change_lang")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(intro_text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ConversationHandler.END
+
+    # ATURAN: Jika diakses DENGAN link referral (?start=BROKER)
+    upline_broker = context.args[0].strip()
+    
+    # Validasi apakah upline broker valid/ada di database
+    cur.execute("SELECT full_name FROM users WHERE broker_account = %s", (upline_broker,))
+    if not cur.fetchone():
+        await update.message.reply_text("❌ Link referral tidak valid atau upline tidak ditemukan. Silakan gunakan link referral yang benar.")
+        return ConversationHandler.END
 
     context.user_data["upline_broker"] = upline_broker
 
     await update.message.reply_text(
-        "👋 Selamat datang di **ZERO EIGHT Loyalty Bot**!\n\n"
-        "Silakan masukkan **Nomor Akun Broker** Anda:",
+        "👋 **Selamat Datang di Zero Eight Bot**\n\n"
+        "Silakan masukkan **Nomor Akun Broker** Anda (hanya berupa angka):",
         parse_mode="Markdown"
     )
     return ASK_BROKER
@@ -116,14 +123,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     broker_account = update.message.text.strip()
     
-    # Cek apakah nomor broker sudah digunakan orang lain
     cur.execute("SELECT telegram_id FROM users WHERE broker_account = %s", (broker_account,))
     if cur.fetchone():
-        await update.message.reply_text("⚠️ Nomor akun broker ini sudah terdaftar di sistem. Silakan masukkan nomor akun broker yang valid:")
+        await update.message.reply_text("⚠️ Nomor akun broker ini sudah terdaftar di sistem. Silakan masukkan nomor akun broker lain yang valid:")
         return ASK_BROKER
 
     context.user_data["broker_account"] = broker_account
-    await update.message.reply_text("✅ Nomor broker diterima.\n\nSekarang masukkan **Nama Lengkap** Anda sesuai identitas:")
+    await update.message.reply_text("✅ Akun broker diterima.\n\nSekarang, silakan masukkan **Nama Lengkap** Anda:")
     return ASK_NAME
 
 
@@ -137,7 +143,6 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     upline_broker = context.user_data.get("upline_broker", "-")
 
     try:
-        # Simpan ke database dengan status awal 'Unverified' dan deposit 0
         cur.execute(
             """
             INSERT INTO users (telegram_id, full_name, username, broker_account, status, deposit_usc, open_levels, upline_broker, created_at)
@@ -148,23 +153,53 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
         await update.message.reply_text(
-            f"🎉 **Pendaftaran Berhasil!**\n\n"
+            f"🎉 **REGISTRASI BERHASIL!**\n\n"
+            f"• Akun Broker: `{broker_account}`\n"
             f"• Nama: {full_name}\n"
-            f"• Broker: `{broker_account}`\n"
-            f"• Status: ⏳ `Unverified` (Menunggu deposit/follow pertama dari Admin)\n\n"
-            f"Akun Anda telah terdaftar secara instan. Komisi dan link referral akan aktif setelah admin memvalidasi deposit pertama Anda.",
+            f"• Upline Broker: `{upline_broker}`\n"
+            f"• Status: ⏳ `Unverified` (Menunggu deposit pertama dari Admin)\n\n"
+            f"Gunakan /menu untuk melihat informasi akun Anda.",
             parse_mode="Markdown"
         )
     except Exception as e:
         logger.error(f"Error registering user: {e}")
         conn.rollback()
-        await update.message.reply_text("❌ Terjadi kesalahan pada sistem database. Silakan coba /start ulang.")
+        await update.message.reply_text("❌ Terjadi kesalahan pada database. Silakan coba /start ulang.")
 
     return ConversationHandler.END
 
 
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    cur.execute("SELECT broker_account, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (user_id,))
+    res = cur.fetchone()
+
+    if not res:
+        await update.message.reply_text("❌ Anda belum terdaftar. Silakan gunakan link referral resmi untuk mendaftar.")
+        return
+
+    broker, status, deposit, levels = res
+    bot_username = context.bot.username
+    
+    if status == "Verified":
+        ref_link = f"https://t.me/{bot_username}?start={broker}"
+    else:
+        ref_link = "Belum aktif (Menunggu verifikasi/deposit pertama dari Admin)"
+
+    menu_text = (
+        f"📌 **MENU UTAMA ZERO EIGHT**\n\n"
+        f"• Akun Broker: `{broker}`\n"
+        f"• Status: {'✅ Terverifikasi & Aktif' if status == 'Verified' else '⏳ Unverified'}\n"
+        f"• Total Deposit: `{deposit:,.0f} USC` (${deposit / 100:,.2f})\n"
+        f"• Level Terbuka: `{levels} Level`\n\n"
+        f"🔗 **Link Referral Anda:**\n`{ref_link}`"
+    )
+    await update.message.reply_text(menu_text, parse_mode="Markdown")
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Pendaftaran dibatalkan.")
+    await update.message.reply_text("❌ Proses dibatalkan.")
     return ConversationHandler.END
 
 
@@ -189,7 +224,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_get_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     broker = update.message.text.strip()
     
-    cur.execute("SELECT full_name, deposit_usc, status FROM users WHERE broker_account = %s", (broker,))
+    cur.execute("SELECT full_name, deposit_usc, open_levels, status FROM users WHERE broker_account = %s", (broker,))
     res = cur.fetchone()
 
     if not res:
@@ -197,13 +232,15 @@ async def admin_get_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADMIN_BROKER
 
     context.user_data["admin_broker"] = broker
-    name, current_dep, status = res
+    name, current_dep, current_lvl, status = res
+    context.user_data["current_level"] = current_lvl
 
     await update.message.reply_text(
-        f"👤 Member: **{name}** (Broker: `{broker}`)\n"
-        f"• Status Saat Ini: {status}\n"
-        f"• Deposit Lama: `{current_dep:,.0f} USC`\n\n"
-        f"Masukkan **Nilai Deposit / Follow Terbaru (dalam USC)**:\n"
+        f"✅ Member ditemukan:\n"
+        f"Nama: **{name}**\n"
+        f"Akun Broker: `{broker}`\n"
+        f"Deposit Lama: `{current_dep:,.0f} USC` (${current_dep / 100:,.2f})\n\n"
+        f"Sekarang, masukkan **Deposit / Nilai Follow Terbaru (dalam USC)**:\n"
         f"*(Ketik 0 jika melakukan unfollow total)*",
         parse_mode="Markdown"
     )
@@ -221,8 +258,9 @@ async def admin_get_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["admin_deposit"] = new_dep
     await update.message.reply_text(
-        "📦 Masukkan **Performance Fee** hari ini untuk member tersebut (dalam USC):\n"
-        f"*(Ketik 0 jika tidak ada fee)*",
+        f"✅ Deposit diterima: `{new_dep:,.0f} USC` (${new_dep / 100:,.2f})\n\n"
+        f"Sekarang, masukkan **Performance Fee** hari ini untuk member tersebut (dalam USC):"
+        f"\n*(Ketik 0 jika tidak ada fee)*",
         parse_mode="Markdown"
     )
     return ADMIN_FEE
@@ -239,29 +277,37 @@ async def admin_get_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     broker = context.user_data.get("admin_broker")
     new_dep = context.user_data.get("admin_deposit")
-    new_lvl = calculate_open_levels(new_dep)
+    old_lvl = context.user_data.get("current_level")
     
-    # Tentukan status baru: Jika deposit 0 (unfollow), status jadi Unverified/Locked. Jika > 0, Verified.
+    new_lvl = calculate_open_levels(new_dep)
     new_status = "Verified" if new_dep > 0 else "Unverified"
 
-    # Simpan data konfirmasi sementara di context
     context.user_data["admin_fee"] = perf_fee
     context.user_data["admin_new_level"] = new_lvl
     context.user_data["admin_status"] = new_status
 
-    # Ambil info nama member
+    # Logika indikator panah Naik / Turun level
+    if new_lvl > old_lvl:
+        lvl_diff_text = f"-> Level Terbuka jadi: {new_lvl} Level (Sebelumnya: {old_lvl} Level - NAIK ⬆️)"
+    elif new_lvl < old_lvl:
+        lvl_diff_text = f"-> Level Terbuka jadi: {new_lvl} Level (Sebelumnya: {old_lvl} Level - TURUN ⬇️)"
+    else:
+        lvl_diff_text = f"-> Level Terbuka: {new_lvl} Level (Tetap)"
+
+    total_pool_network = perf_fee * 0.20 # 20% dibagikan ke jaringan
+
     cur.execute("SELECT full_name FROM users WHERE broker_account = %s", (broker,))
     name = cur.fetchone()[0]
 
     preview_text = (
-        f"📋 **PREVIEW PERUBAHAN ADMIN**\n\n"
-        f"• Nama: **{name}**\n"
-        f"• Broker: `{broker}`\n"
-        f"• Status Baru: **{new_status}**\n"
-        f"• Deposit Baru: `{new_dep:,.0f} USC`\n"
-        f"• Open Level: **{new_lvl} Level**\n"
-        f"• Performance Fee: `{perf_fee:,.0f} USC`\n\n"
-        f"Simpan perubahan ini ke database?"
+        f"📋 **PREVIEW SEBELUM SIMPAN:**\n\n"
+        f"Member: **{name}** (`{broker}`)\n"
+        f"Tanggal: Hari Ini\n"
+        f"Deposit: `{new_dep:,.0f} USC` (${new_dep / 100:,.2f})\n"
+        f"{lvl_diff_text}\n\n"
+        f"Performance Fee: `{perf_fee:,.0f} USC` (${perf_fee / 100:,.2f})\n"
+        f"-> Total Poin yang dibagi ke jaringan (20%): `{total_pool_network:,.2f} USC` = `{total_pool_network / 100:,.2f} Poin`\n\n"
+        f"Apakah data sudah benar?"
     )
 
     keyboard = [
@@ -289,7 +335,7 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     perf_fee = context.user_data.get("admin_fee")
 
     try:
-        # 1. Update data deposit, status, dan level member
+        # Update data member di database
         cur.execute(
             """
             UPDATE users 
@@ -300,7 +346,6 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         conn.commit()
 
-        # 2. Jika ada Performance Fee > 0, distribusikan komisi ke 15 upline
         distribusi_log = ""
         if perf_fee > 0:
             current_upline = broker
@@ -311,19 +356,17 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     break
                 
                 upline_broker = res[0]
-                cur.execute("SELECT full_name, open_levels, telegram_id FROM users WHERE broker_account = %s", (upline_broker,))
+                cur.execute("SELECT full_name, open_levels FROM users WHERE broker_account = %s", (upline_broker,))
                 upline_data = cur.fetchone()
                 if not upline_data:
                     break
 
-                upline_name, upline_open_levels, upline_tg_id = upline_data
+                upline_name, upline_open_levels = upline_data
                 rate = COMMISSION_RATES.get(level, 0.0)
                 earned_usc = perf_fee * rate
 
-                # Cek syarat open level upline
                 if upline_open_levels >= level:
-                    # Tambahkan poin/komisi ke upline (bisa disimpan ke kolom points di database jika ada)
-                    distribusi_log += f"Lv {level}: {upline_name} (+{earned_usc:,.0f} USC)\n"
+                    distribusi_log += f"Lv {level}: {upline_name} (+{earned_usc:,.0f} USC / ${earned_usc/100:.2f})\n"
                 else:
                     distribusi_log += f"Lv {level}: {upline_name} (Terkunci, Open Lv: {upline_open_levels})\n"
 
@@ -331,11 +374,11 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await query.edit_message_text(
             f"✅ **DATA BERHASIL DISIMPAN!**\n\n"
-            f"Broker `{broker}` diperbarui:\n"
-            f"• Status: {new_status}\n"
-            f"• Deposit: {new_dep:,.0f} USC\n"
-            f"• Level: {new_lvl} Level\n\n"
-            f"📦 **Distribusi Komisi:**\n{distribusi_log if perf_fee > 0 else 'Tidak ada Performance Fee.'}",
+            f"Akun Broker: `{broker}`\n"
+            f"• Deposit Baru: `{new_dep:,.0f} USC` (${new_dep / 100:,.2f})\n"
+            f"• Level Terbuka: `{new_lvl} Level`\n"
+            f"• Performance Fee: `{perf_fee:,.0f} USC`\n\n"
+            f"📦 **Distribusi Komisi Jaringan:**\n{distribusi_log if perf_fee > 0 else 'Tidak ada Performance Fee.'}",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -345,11 +388,10 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ==========================================
-# 3. FITUR PEMBERSIHAN & MANAJEMEN ADMIN
+# 3. MANAJEMEN ADMIN TAMBAHAN & CLEANUP
 # ==========================================
 
 async def auto_cleanup_unverified_users(context: ContextTypes.DEFAULT_TYPE):
-    """Background Job: Menghapus akun Unverified yang berumur > 48 jam"""
     try:
         cur.execute(
             """
@@ -361,7 +403,7 @@ async def auto_cleanup_unverified_users(context: ContextTypes.DEFAULT_TYPE):
         deleted_count = cur.rowcount
         conn.commit()
         if deleted_count > 0:
-            logger.info(f"🧹 Auto-Cleanup: Membersihkan {deleted_count} akun unverified (48 jam+).")
+            logger.info(f"🧹 Auto-Cleanup: Menghapus {deleted_count} akun unverified (>48 jam).")
     except Exception as e:
         logger.error(f"Error auto cleanup: {e}")
         conn.rollback()
@@ -393,7 +435,7 @@ async def admin_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ **AKUN BERHASIL DIHAPUS**\n\n"
             f"Nama: {user[0]}\n"
-            f"Akun Broker: `{broker_acc}` telah dihapus dari sistem.",
+            f"Broker: `{broker_acc}` telah dihapus permanen dari sistem.",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -419,7 +461,7 @@ async def admin_list_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
         members = cur.fetchall()
 
         if not members:
-            await update.message.reply_text("📂 Belum ada member yang terdaftar di database.")
+            await update.message.reply_text("📂 Belum ada member terdaftar.")
             return
 
         response_text = "📋 **DAFTAR SELURUH MEMBER KOMUNITAS**\n\n"
@@ -431,7 +473,7 @@ async def admin_list_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"{idx}. **{name}** (@{username or 'tanpa_username'})\n"
                 f"   • Broker: `{broker}`\n"
                 f"   • Status: {status_emoji} {status}\n"
-                f"   • Deposit: {deposit:,.0f} USC\n"
+                f"   • Deposit: `{deposit:,.0f} USC` (${deposit/100:.2f})\n"
                 f"   • Open Level: {levels} Level\n"
                 f"   • Upline: `{upline}`\n"
                 f"   -----------------------------------\n"
@@ -479,8 +521,8 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"• Nama: **{name}**\n"
         f"• Username: @{username or '-'}\n"
         f"• Akun Broker: `{broker_acc}`\n"
-        f"• Status Akun: **{status}**\n"
-        f"• Total Deposit: **{deposit:,.0f} USC**\n"
+        f"• Status: **{status}**\n"
+        f"• Total Deposit: **`{deposit:,.0f} USC`** (${deposit/100:.2f})\n"
         f"• Level Terbuka: **{levels} Level**\n"
         f"• Upline Broker: `{upline}`\n"
         f"• Tanggal Daftar: {created}"
@@ -493,8 +535,7 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==========================================
 
 def main():
-    # Ganti dengan Token Bot Telegram Anda dari @BotFather
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "9295610891:AAHOL3Sd2blRnhqt6e9eRwWGJJYx4hJA3gM")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "MASUKKAN_TOKEN_BOT_ANDA_DISINI")
     
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -523,9 +564,10 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Registrasi Handler
+    # Registrasi Handler Utama
     app.add_handler(reg_handler)
     app.add_handler(admin_handler)
+    app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CallbackQueryHandler(admin_save_callback, pattern="^admin_"))
     
     # Perintah Admin Tambahan
