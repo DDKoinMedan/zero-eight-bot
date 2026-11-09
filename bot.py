@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Daftar Telegram ID Admin (Ganti dengan ID Telegram Anda yang sebenarnya)
-ADMIN_IDS = [123456789]  # Contoh Telegram ID Admin
+ADMIN_IDS = [420150137]  # Contoh Telegram ID Admin
 
 # Koneksi ke Database Supabase PostgreSQL
 try:
