@@ -2,7 +2,7 @@ import os
 import logging
 import psycopg2
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -21,9 +21,7 @@ logger = logging.getLogger(__name__)
 
 # --- KONFIGURASI DATABASE & ADMIN ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Daftar Telegram ID Admin (Sesuaikan dengan ID Telegram Anda)
-ADMIN_IDS = [420150137]
+ADMIN_IDS = [777777001] # Ganti/sesuaikan dengan ID Telegram Anda
 
 # Koneksi ke Database Supabase PostgreSQL
 try:
@@ -57,6 +55,16 @@ def calculate_open_levels(deposit_usc):
     elif dep >= 5000: return 1
     else: return 0
 
+# --- REPLY KEYBOARD 7 TOMBOL UTAMA ---
+def get_main_menu_keyboard():
+    keyboard = [
+        [KeyboardButton("👤 Profil Saya"), KeyboardButton("💰 Poin Saya")],
+        [KeyboardButton("🌐 Jaringan Saya"), KeyboardButton("🎁 Daftar Reward")],
+        [KeyboardButton("🔗 Link Referral Saya"), KeyboardButton("🌐 Ganti Bahasa")],
+        [KeyboardButton("❓ Bantuan")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 # ==========================================
 # 1. FITUR AKSES, PENDAFTARAN & MENU UTAMA
@@ -66,7 +74,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     telegram_id = user.id
 
-    # Cek apakah user sudah terdaftar di database
     cur.execute("SELECT broker_account, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (telegram_id,))
     existing = cur.fetchone()
 
@@ -80,12 +87,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Status: {status_text}\n"
             f"• Total Deposit: `{deposit:,.0f} USC` (${deposit / 100:,.2f})\n"
             f"• Level Terbuka: `{levels} Level`\n\n"
-            f"Pilih menu di bawah atau gunakan /menu:"
+            f"Silakan gunakan menu di bawah:"
         )
-        await update.message.reply_text(welcome_msg, parse_mode="Markdown")
+        await update.message.reply_text(welcome_msg, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
         return ConversationHandler.END
 
-    # ATURAN: Jika diakses TANPA link referral (tidak ada context.args)
+    # ATURAN: Akses TANPA link referral (registrasi ditutup, tampil info & tombol bahasa)
     if not context.args:
         intro_text = (
             "🖲️ **Selamat Datang di Zero Eight Bot**\n\n"
@@ -101,13 +108,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(intro_text, reply_markup=reply_markup, parse_mode="Markdown")
         return ConversationHandler.END
 
-    # ATURAN: Jika diakses DENGAN link referral (?start=BROKER)
+    # ATURAN: Akses DENGAN link referral (?start=BROKER)
     upline_broker = context.args[0].strip()
     
-    # Validasi apakah upline broker valid/ada di database
     cur.execute("SELECT full_name FROM users WHERE broker_account = %s", (upline_broker,))
     if not cur.fetchone():
-        await update.message.reply_text("❌ Link referral tidak valid atau upline tidak ditemukan. Silakan gunakan link referral yang benar.")
+        await update.message.reply_text("❌ Link referral tidak valid atau upline tidak ditemukan.")
         return ConversationHandler.END
 
     context.user_data["upline_broker"] = upline_broker
@@ -125,7 +131,7 @@ async def receive_broker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cur.execute("SELECT telegram_id FROM users WHERE broker_account = %s", (broker_account,))
     if cur.fetchone():
-        await update.message.reply_text("⚠️ Nomor akun broker ini sudah terdaftar di sistem. Silakan masukkan nomor akun broker lain yang valid:")
+        await update.message.reply_text("⚠️ Nomor akun broker ini sudah terdaftar. Silakan masukkan nomor akun broker lain yang valid:")
         return ASK_BROKER
 
     context.user_data["broker_account"] = broker_account
@@ -158,7 +164,8 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Nama: {full_name}\n"
             f"• Upline Broker: `{upline_broker}`\n"
             f"• Status: ⏳ `Unverified` (Menunggu deposit pertama dari Admin)\n\n"
-            f"Gunakan /menu untuk melihat informasi akun Anda.",
+            f"Silakan gunakan menu di bawah:",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -195,16 +202,73 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Level Terbuka: `{levels} Level`\n\n"
         f"🔗 **Link Referral Anda:**\n`{ref_link}`"
     )
-    await update.message.reply_text(menu_text, parse_mode="Markdown")
+    await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Proses dibatalkan.")
+    await update.message.reply_text("❌ Proses dibatalkan.", reply_markup=get_main_menu_keyboard())
     return ConversationHandler.END
 
 
 # ==========================================
-# 2. PANEL ADMIN & REKAP HARIAN (/admin)
+# 2. HANDLER TOMBOL MENU & GANTI BAHASA
+# ==========================================
+
+async def handle_text_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = update.effective_user.id
+
+    if text == "👤 Profil Saya":
+        cur.execute("SELECT broker_account, full_name, status, deposit_usc, open_levels FROM users WHERE telegram_id = %s", (user_id,))
+        res = cur.fetchone()
+        if not res:
+            await update.message.reply_text("❌ Anda belum terdaftar.")
+            return
+        broker, name, status, deposit, levels = res
+        await update.message.reply_text(
+            f"👤 **PROFIL SAYA**\n\n"
+            f"• Nama: {name}\n"
+            f"• Broker: `{broker}`\n"
+            f"• Status: {status}\n"
+            f"• Deposit: `{deposit:,.0f} USC` (${deposit/100:.2f})\n"
+            f"• Level Terbuka: `{levels} Level`",
+            parse_mode="Markdown"
+        )
+    elif text == "🌐 Ganti Bahasa":
+        lang_keyboard = [
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"), InlineKeyboardButton("🇻🇳 Vietnamese", callback_data="lang_vi")],
+            [InlineKeyboardButton("🇹🇭 Thai", callback_data="lang_th"), InlineKeyboardButton("🇰🇭 Cambodian", callback_data="lang_km")],
+            [InlineKeyboardButton("🇨🇳 Mandarin", callback_data="lang_zh"), InlineKeyboardButton("🇮🇳 Indian", callback_data="lang_hi")],
+            [InlineKeyboardButton("🇸🇦 Arabic", callback_data="lang_ar"), InlineKeyboardButton("🇫🇷 French", callback_data="lang_fr")],
+            [InlineKeyboardButton("🇷🇺 Russian", callback_data="lang_ru")]
+        ]
+        await update.message.reply_text("🌐 **Pilih Bahasa / Select Language:**", reply_markup=InlineKeyboardMarkup(lang_keyboard), parse_mode="Markdown")
+    elif text == "🔗 Link Referral Saya":
+        await menu(update, context)
+    else:
+        await update.message.reply_text(f"Tombol **{text}** sedang diproses / gunakan /menu.", parse_mode="Markdown")
+
+
+async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "change_lang":
+        lang_keyboard = [
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"), InlineKeyboardButton("🇻🇳 Vietnamese", callback_data="lang_vi")],
+            [InlineKeyboardButton("🇹🇭 Thai", callback_data="lang_th"), InlineKeyboardButton("🇰🇭 Cambodian", callback_data="lang_km")],
+            [InlineKeyboardButton("🇨🇳 Mandarin", callback_data="lang_zh"), InlineKeyboardButton("🇮🇳 Indian", callback_data="lang_hi")],
+            [InlineKeyboardButton("🇸🇦 Arabic", callback_data="lang_ar"), InlineKeyboardButton("🇫🇷 French", callback_data="lang_fr")],
+            [InlineKeyboardButton("🇷🇺 Russian", callback_data="lang_ru")]
+        ]
+        await query.edit_message_text("🌐 **Pilih Bahasa / Select Language:**", reply_markup=InlineKeyboardMarkup(lang_keyboard), parse_mode="Markdown")
+    elif query.data.startswith("lang_"):
+        selected_lang = query.data.split("_")[1].upper()
+        await query.edit_message_text(f"✅ Bahasa berhasil diubah ke **{selected_lang}**.", parse_mode="Markdown")
+
+
+# ==========================================
+# 3. PANEL ADMIN & REKAP HARIAN (/admin)
 # ==========================================
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,7 +350,6 @@ async def admin_get_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["admin_new_level"] = new_lvl
     context.user_data["admin_status"] = new_status
 
-    # Logika indikator panah Naik / Turun level
     if new_lvl > old_lvl:
         lvl_diff_text = f"-> Level Terbuka jadi: {new_lvl} Level (Sebelumnya: {old_lvl} Level - NAIK ⬆️)"
     elif new_lvl < old_lvl:
@@ -294,7 +357,7 @@ async def admin_get_fee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         lvl_diff_text = f"-> Level Terbuka: {new_lvl} Level (Tetap)"
 
-    total_pool_network = perf_fee * 0.20 # 20% dibagikan ke jaringan
+    total_pool_network = perf_fee * 0.20
 
     cur.execute("SELECT full_name FROM users WHERE broker_account = %s", (broker,))
     name = cur.fetchone()[0]
@@ -335,7 +398,6 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     perf_fee = context.user_data.get("admin_fee")
 
     try:
-        # Update data member di database
         cur.execute(
             """
             UPDATE users 
@@ -388,7 +450,7 @@ async def admin_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ==========================================
-# 3. MANAJEMEN ADMIN TAMBAHAN & CLEANUP
+# 4. MANAJEMEN ADMIN TAMBAHAN & CLEANUP
 # ==========================================
 
 async def auto_cleanup_unverified_users(context: ContextTypes.DEFAULT_TYPE):
@@ -531,11 +593,11 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ==========================================
-# 4. MAIN PROGRAM & HANDLER REGISTRATION
+# 5. MAIN PROGRAM & HANDLER REGISTRATION
 # ==========================================
 
 def main():
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "9295610891:AAHOL3Sd2blRnhqt6e9eRwWGJJYx4hJA3gM")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -568,6 +630,10 @@ def main():
     app.add_handler(reg_handler)
     app.add_handler(admin_handler)
     app.add_handler(CommandHandler("menu", menu))
+    
+    # Handler Tombol Menu & Bahasa
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_menu))
+    app.add_handler(CallbackQueryHandler(handle_language_callback, pattern="^(change_lang|lang_)"))
     app.add_handler(CallbackQueryHandler(admin_save_callback, pattern="^admin_"))
     
     # Perintah Admin Tambahan
