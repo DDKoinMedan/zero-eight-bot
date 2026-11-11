@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # --- KONFIGURASI DATABASE & ADMIN ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_IDS = [777777001]
+ADMIN_IDS = [420150137]
 
 try:
     conn = psycopg2.connect(DATABASE_URL)
@@ -474,7 +474,7 @@ async def admin_check_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def main():
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "9295610891:AAHOL3Sd2blRnhqt6e9eRwWGJJYx4hJA3gM")
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.job_queue.run_repeating(auto_cleanup_unverified_users, interval=3600, first=10)
